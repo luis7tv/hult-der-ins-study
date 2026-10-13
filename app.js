@@ -7,49 +7,57 @@
     set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
   };
   const SESSIONS = window.DI_SESSIONS || [];
+  const LEARN = window.DI_LEARN || {};
   const LIBS = window.DI_LIBS || [];
-  const PKEY = 'di-progress-v1', POSKEY = 'di-flow-pos-v1';
+  const PKEY = 'di-progress-v2';
   let progress = store.get(PKEY, {});
   const main = $('#main');
   const live = $('#live');
   const say = t => { live.textContent = ''; setTimeout(() => { live.textContent = t; }, 30); };
   const finePointer = matchMedia('(pointer:fine)').matches;
 
-  /* ---------- items, flow and progress ---------- */
-  const itemId = (sid, kind, i) => `${sid}:${kind}:${i}`;
-  const flat = s => [
-    ...s.cards.map((it, i) => ({ id: itemId(s.id, 'c', i), sid: s.id, kind: 'card', i, it })),
-    ...s.quiz.map((it, i) => ({ id: itemId(s.id, 'q', i), sid: s.id, kind: 'quiz', i, it }))
-  ];
-  const allItems = () => SESSIONS.flatMap(flat);
-  // cards and code questions of one session, alternated so the flow never runs 30 cards in a row
-  const interleave = (a, b) => {
-    const out = []; let i = 0, j = 0;
-    while (i < a.length || j < b.length) {
-      const ra = a.length ? i / a.length : 2, rb = b.length ? j / b.length : 2;
-      if (ra <= rb) out.push(a[i++]); else out.push(b[j++]);
-    }
-    return out;
+  /* ---------- motion (GSAP when loaded, nothing when reduced motion or offline) ---------- */
+  const G = window.gsap || null;
+  const ST = window.ScrollTrigger || null;
+  const M = !!G && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (G && ST) G.registerPlugin(ST);
+  const anim = {
+    enter(card) {
+      if (!M || !card) return;
+      G.from(card, { y: 20, autoAlpha: 0, duration: .5, ease: 'expo.out' });
+      const kids = card.querySelectorAll('[data-stagger] > *');
+      if (kids.length) G.from(kids, { y: 10, autoAlpha: 0, duration: .45, stagger: .045, ease: 'power2.out', delay: .08 });
+    },
+    leave(card, cb) { if (!M || !card) return cb(); G.to(card, { y: -16, autoAlpha: 0, duration: .22, ease: 'power2.in', onComplete: cb }); },
+    pulse(el) { if (M && el) G.fromTo(el, { scale: 1 }, { scale: 1.025, duration: .14, yoyo: true, repeat: 1, ease: 'power1.inOut' }); },
+    shake(el) { if (M && el) G.fromTo(el, { x: 0 }, { keyframes: [{ x: -7 }, { x: 7 }, { x: -4 }, { x: 4 }, { x: 0 }], duration: .36, ease: 'none' }); },
+    in(el) { if (M && el) G.from(el, { y: 10, autoAlpha: 0, duration: .32, ease: 'power2.out' }); },
+    count(el, to) { if (!el) return; if (!M) { el.textContent = to; return; } const o = { v: 0 }; G.to(o, { v: to, duration: .9, ease: 'power2.out', snap: { v: 1 }, onUpdate: () => { el.textContent = Math.round(o.v); } }); },
+    page(root) { if (!M) return; const kids = root.querySelectorAll('[data-rise]'); if (kids.length) G.from(kids, { y: 18, autoAlpha: 0, duration: .6, stagger: .07, ease: 'expo.out' }); },
+    learn(root) {
+      if (!M || !ST) return;
+      root.querySelectorAll('.lsec').forEach(sec => {
+        G.from(sec, { y: 26, autoAlpha: 0, ease: 'none', scrollTrigger: { trigger: sec, start: 'top 94%', end: 'top 72%', scrub: true } });
+      });
+    },
+    killScroll() { if (ST) ST.getAll().forEach(t => t.kill()); }
   };
-  const FLOW = SESSIONS.flatMap(s => { const f = flat(s); return interleave(f.filter(x => x.kind === 'card'), f.filter(x => x.kind === 'quiz')); });
-  const sessionOf = sid => SESSIONS.find(s => s.id === sid);
-  const sessionStart = sid => Math.max(0, FLOW.findIndex(x => x.sid === sid));
-  const getPos = () => Math.min(Math.max(store.get(POSKEY, 0) | 0, 0), FLOW.length);
-  const setPos = i => store.set(POSKEY, i);
-  const known = id => progress[id]?.last === 'r';
-  const missed = id => progress[id]?.last === 'w';
-  const record = (id, ok) => {
-    const p = progress[id] || { r: 0, w: 0 };
-    ok ? p.r++ : p.w++;
-    p.last = ok ? 'r' : 'w'; p.t = Date.now();
+
+  /* ---------- items and progress ---------- */
+  const itemId = (sid, i) => `${sid}:q:${i}`;
+  const quizItems = s => s.quiz.map((it, i) => ({ id: itemId(s.id, i), sid: s.id, i, it }));
+  const mastered = id => progress[id]?.last === 'r';
+  const record = (id, res) => {
+    const p = progress[id] || { r: 0, w: 0, s: 0 };
+    p[res] = (p[res] || 0) + 1; p.last = res; p.t = Date.now();
     progress[id] = p; store.set(PKEY, progress);
   };
   const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
-  const sessionStats = s => {
-    const items = flat(s);
-    return { n: items.length, known: items.filter(x => known(x.id)).length, missed: items.filter(x => missed(x.id)).length };
-  };
-  const shuffle = a => { const b = a.slice(); for (let i = b.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [b[i], b[j]] = [b[j], b[i]]; } return b; };
+  const sStats = s => { const q = quizItems(s); return { n: q.length, right: q.filter(x => mastered(x.id)).length }; };
+  const sessionOf = sid => SESSIONS.find(s => s.id === sid);
+  const sIndex = sid => SESSIONS.findIndex(s => s.id === sid);
+  const nextWork = fromIdx => { for (let k = fromIdx; k < SESSIONS.length; k++) if (quizItems(SESSIONS[k]).some(x => !mastered(x.id))) return SESSIONS[k]; return null; };
+  const totals = () => { const all = SESSIONS.flatMap(quizItems); return { n: all.length, right: all.filter(x => mastered(x.id)).length }; };
 
   /* ---------- code rendering ---------- */
   const TOK = /(#[^\n]*)|("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(\b\d+(?:\.\d+)?(?:e\d+)?\b)|(\b(?:import|from|as|for|in|if|else|elif|while|def|class|return|lambda|and|or|not|True|False|None|print|with)\b)/g;
@@ -68,10 +76,12 @@
 
   /* ---------- icons, theme, top bar ---------- */
   const icons = {
-    chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
     back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
+    fwd: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
     check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>',
     x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    eye: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+    skip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l9 7-9 7V5zM17 5v14"/></svg>',
     sun: '<svg class="sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
     moon: '<svg class="moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>'
   };
@@ -80,225 +90,251 @@
   const syncTheme = () => document.querySelectorAll('[data-theme-toggle]').forEach(b => { b.setAttribute('aria-pressed', String(isDark())); b.setAttribute('aria-label', isDark() ? 'Switch to light mode' : 'Switch to dark mode'); });
   const toggleTheme = () => { root.dataset.theme = isDark() ? 'light' : 'dark'; try { localStorage.setItem('di-theme', root.dataset.theme); } catch (e) {} syncTheme(); };
   const themeBtn = () => `<button class="tbtn" type="button" data-theme-toggle>${icons.sun}${icons.moon}</button>`;
-  const brand = (cls = '') => `<a class="brand ${cls}" href="#/"><span class="brand-mark" aria-hidden="true"></span><span>Deriving Insights</span></a>`;
+  const brand = () => `<a class="brand" href="#/" aria-label="Deriving Insights, start page"><span class="brand-mark" aria-hidden="true"></span><span class="brand-t">Deriving Insights</span></a>`;
+  const tnav = on => `<nav class="tnav" aria-label="Sections"><a href="#/learn" class="${on === 'learn' ? 'on' : ''}">Learn</a><a href="#/quiz" class="${on === 'quiz' ? 'on' : ''}">Quiz</a></nav>`;
   const topbar = (left, right = '') => `<header class="top">${left}<span class="sp"></span>${right}${themeBtn()}</header>`;
   const bind = () => { main.querySelectorAll('[data-theme-toggle]').forEach(b => b.addEventListener('click', toggleTheme)); syncTheme(); };
+  const learnLast = () => store.get('di-learn-last', SESSIONS[0].id);
 
   /* ---------- start page ---------- */
   const viewStart = () => {
-    const pos = getPos(), total = FLOW.length, done = pos >= total;
-    const cur = FLOW[Math.min(pos, total - 1)], cs = sessionOf(cur.sid);
-    const items = allItems(), m = items.filter(x => missed(x.id)).length;
-    let h = topbar(brand(), `<a class="tlink" href="#/libs">Libraries</a>`);
-    h += `<div class="wrap"><section class="hero s-${cs.id}">
-      <span class="mono">Hult MBAN · Python · ${total} cards and questions</span>
-      <h1 class="h1">Deriving Insights through Data with Python</h1>
-      <p class="lede">One screen at a time, from Session 1 to A2: a concept card, then a code question, and so on. Wrong answers show the correct one and why. Your place is remembered.</p>
-      <div class="cont">
-        <a class="btn primary big" href="#/flow">${done ? 'Start over' : pos ? 'Continue' : 'Start'} <kbd>Enter</kbd></a>
-        <div class="cont-meta">${done ? `<b>All ${total} done.</b> Start over keeps your results.` : pos ? `<b>${pos} of ${total}</b> · next up <em>Session ${esc(cs.n)}</em>, ${esc(cs.title)}` : `<b>${total}</b> screens · about 2 hours in total, or a session at a time`}</div>
+    const t = totals(), nw = nextWork(0), qs = nw || SESSIONS[0];
+    const ls = sessionOf(learnLast()) || SESSIONS[0];
+    let h = topbar(brand(), `<a class="tlink" href="#/learn/libs">Libraries</a>`);
+    h += `<div class="wrap"><section class="hero">
+      <span class="mono" data-rise>Hult MBAN · Python · Sessions 1 to 7</span>
+      <h1 class="h1" data-rise>Deriving Insights through Data with Python</h1>
+      <p class="lede" data-rise>Learn explains every notebook section in plain words. Quiz asks one code question per screen; see the answer or skip whenever you want, and it comes back until you get it right.</p>
+      <div class="doors">
+        <a class="door s-${ls.id}" href="#/learn/${ls.id}" data-rise><span class="door-k"><i class="dot"></i>Learn</span><b>Read the sessions</b><p>Each section of the notebooks explained simply, with the code next to it.</p><span class="door-f"><span>Session ${esc(ls.n)}, ${esc(ls.title)}</span><span class="btn primary">Open ${icons.fwd}</span></span></a>
+        <a class="door s-${qs.id}" href="#/quiz" data-rise><span class="door-k"><i class="dot"></i>Quiz</span><b>${t.right ? 'Continue the quiz' : 'Start the quiz'}</b><p>${t.n} code questions. Skip, see the answer, or answer. Everything you did not get right comes back.</p><span class="door-f"><span><b>${t.right}</b> of ${t.n} right · next Session ${esc(qs.n)}</span><span class="btn primary">${t.right ? 'Continue' : 'Start'} ${icons.fwd}</span></span></a>
       </div>
-      <div class="prog"><i style="width:${pct(pos, total)}%"></i></div>
     </section>
-    <section class="cps"><h2 class="h2">Jump to a session</h2><p>Starts the flow at that session. The color follows you through it.</p><div>`;
+    <section class="cps" data-rise><h2 class="h2">Sessions</h2><p>Read a session, then quiz it. The color follows you through each one.</p><div>`;
     for (const s of SESSIONS) {
-      const st = sessionStats(s);
-      h += `<a class="cp s-${s.id}" href="#/flow/${s.id}"><span class="cp-n">${esc(s.n)}</span><span><div class="cp-t">${esc(s.title)}</div><div class="cp-s">${esc(s.sub)}</div></span><span class="cp-m"><span><b>${st.known}</b> of ${st.n} right</span><span class="meter"><i style="width:${pct(st.known, st.n)}%"></i></span></span></a>`;
+      const st = sStats(s);
+      h += `<div class="cp s-${s.id}"><span class="cp-n">${esc(s.n)}</span><span><div class="cp-t">${esc(s.title)}</div><div class="cp-s">${esc(s.sub)}</div></span><span class="cp-a"><span class="cp-m"><span><b>${st.right}</b>/${st.n}</span><span class="meter"><i style="width:${pct(st.right, st.n)}%"></i></span></span><a class="btn" href="#/learn/${s.id}">Learn</a><a class="btn primary" href="#/quiz/${s.id}">Quiz</a></span></div>`;
     }
-    h += `</div></section>
-    <div class="actions"><a class="btn" href="#/mistakes">Review mistakes ${m ? `<span class="badge">${m}</span>` : ''}</a><a class="btn" href="#/mix">Mixed drill, 20 random</a><button class="btn quiet" type="button" data-reset>Reset everything</button></div></div>`;
+    h += `</div></section><div class="actions"><button class="btn quiet" type="button" data-reset>Reset quiz results</button></div></div>`;
     main.innerHTML = h; bind();
+    anim.page(main);
     $('[data-reset]').addEventListener('click', () => {
-      if (!confirm('Clear every result and go back to the first screen?')) return;
-      progress = {}; store.set(PKEY, progress); setPos(0); route();
+      if (!confirm('Clear every quiz result?')) return;
+      progress = {}; store.set(PKEY, progress); route();
     });
   };
 
+  /* ---------- learn ---------- */
+  const viewLearn = s => {
+    const L = LEARN[s.id] || { intro: '', sections: [] };
+    store.set('di-learn-last', s.id);
+    const idx = sIndex(s.id), prev = SESSIONS[idx - 1], next = SESSIONS[idx + 1];
+    let h = topbar(brand() + tnav('learn'), `<span class="tsess s-${s.id}"><i class="dot"></i><span><em>S<span class="tt">ession </span>${esc(s.n)}</em><span class="tt"> · ${esc(s.title)}</span></span></span>`);
+    h += `<div class="learn s-${s.id}"><article class="article">
+      <header class="lhead"><span class="mono" data-rise><em>Session ${esc(s.n)}</em> · ${L.sections.length} sections · ${s.cards.length} quick-review points</span><h1 class="h1" data-rise>${esc(s.title)}</h1><p class="lede" data-rise>${esc(L.intro || s.sub)}</p></header>`;
+    L.sections.forEach((sec, i) => {
+      h += `<section class="lsec" id="sec-${i}"><h2><span class="n">${i + 1}</span><span>${esc(sec.h)}</span></h2>${(sec.p || []).map(p => `<p>${inline(p)}</p>`).join('')}${sec.code ? codeHtml(sec.code) : ''}</section>`;
+    });
+    h += `<section class="lsec review" id="review"><h2><span class="n">${L.sections.length + 1}</span><span>Quick review</span></h2><p>Every point from this session as a question and its answer. Cover the answer, say it, check.</p>`;
+    for (const c of s.cards) h += `<div class="qa"><b>${inline(c.q)}</b><p>${inline(c.a)}</p>${c.code ? codeHtml(c.code) : ''}</div>`;
+    h += `</section><div class="lcta">${prev ? `<a class="btn ghost" href="#/learn/${prev.id}">${icons.back}Session ${esc(prev.n)}</a>` : ''}<span class="sp"></span>${next ? `<a class="btn" href="#/learn/${next.id}">Session ${esc(next.n)}: ${esc(next.title)} ${icons.fwd}</a>` : ''}<a class="btn primary" href="#/quiz/${s.id}">Quiz Session ${esc(s.n)} ${icons.fwd}</a></div></article>
+      <aside class="rail" aria-label="On this page"><span class="mono">Session ${esc(s.n)}</span>${L.sections.map((sec, i) => `<button type="button" data-go="sec-${i}">${esc(sec.h)}</button>`).join('')}<button type="button" data-go="review">Quick review</button><a class="btn primary" href="#/quiz/${s.id}">Quiz this session</a></aside></div>`;
+    // phone and tablet: a sticky strip of section numbers instead of the rail
+    const strip = `<nav class="lnav s-${s.id}" aria-label="Sections">${L.sections.map((sec, i) => `<button type="button" data-go="sec-${i}" title="${esc(sec.h)}">${i + 1}</button>`).join('')}<button type="button" data-go="review" title="Quick review">Review</button></nav>`;
+    main.innerHTML = h.replace('<div class="learn ', strip + '<div class="learn '); bind();
+    main.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { const el = document.getElementById(b.dataset.go); if (el) el.scrollIntoView({ behavior: M ? 'smooth' : 'auto', block: 'start' }); }));
+    anim.page(main.querySelector('.lhead'));
+    anim.learn(main);
+    // active section for the rail and the strip, independent of motion settings
+    const links = main.querySelectorAll('[data-go]');
+    const setActive = id => links.forEach(b => { const on = b.dataset.go === id; b.classList.toggle('on', on); if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); });
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver(entries => { entries.forEach(e => { if (e.isIntersecting) setActive(e.target.id); }); }, { rootMargin: '-35% 0px -55% 0px', threshold: 0 });
+      main.querySelectorAll('.lsec').forEach(sec => io.observe(sec));
+    }
+    if (ST && M) ST.refresh();
+  };
+
   const viewLibs = () => {
-    let h = topbar(brand(), `<a class="tlink" href="#/">${icons.back}Start page</a>`);
-    h += `<div class="wrap"><h1 class="h1">Libraries used in the course</h1><p class="lede">What each one is for, how it is imported, and every call the notebooks used. Nothing here is outside the course.</p>`;
+    let h = topbar(brand() + tnav('learn'), `<a class="tlink" href="#/">${icons.back}<span>Start page</span></a>`);
+    h += `<div class="wrap"><h1 class="h1">Libraries used in the course</h1><p class="lede">What each one is for, how it is imported, and every call the notebooks used.</p>`;
     for (const l of LIBS) {
-      h += `<section class="lib" id="lib-${l.id}"><div class="lib-h"><h2 class="h2">${esc(l.name)}</h2><span class="chips">${l.sessions.map(n => { const s = SESSIONS.find(x => x.n === n); return `<span class="chip ${s ? 's-' + s.id : ''}">S${esc(n)}</span>`; }).join('')}</span></div>
+      h += `<section class="lib" id="lib-${l.id}"><div class="lib-h"><h2 class="h2">${esc(l.name)}</h2><span class="chips">${l.sessions.filter(n => SESSIONS.some(x => x.n === n)).map(n => { const s = SESSIONS.find(x => x.n === n); return `<a class="chip s-${s.id}" href="#/learn/${s.id}">S${esc(n)}</a>`; }).join('')}</span></div>
         <p class="lib-what">${esc(l.what)}</p>${codeHtml(l.imp)}
         <div class="calls">${l.calls.map(([c, w]) => `<div class="cc">${esc(c)}</div><div class="cw">${esc(w)}</div>`).join('')}</div></section>`;
     }
     main.innerHTML = h + '</div>'; bind();
   };
 
-  /* ---------- runner ---------- */
+  /* ---------- quiz ---------- */
   let run = null;
-  const startRun = cfg => {
-    run = { items: cfg.items, i: cfg.i || 0, results: [], title: cfg.title, back: cfg.back || '#/', backLabel: cfg.backLabel || 'Start page', flow: !!cfg.flow, mixed: !!cfg.mixed, interstitial: null, revealed: false, answered: false, picked: null, typed: '' };
-    renderRun();
+  const startQuiz = s => {
+    const items = quizItems(s);
+    let queue = items.filter(x => !mastered(x.id));
+    const practice = queue.length === 0;
+    if (practice) queue = items.slice();
+    run = { s, queue, i: 0, practice, reask: {}, results: [], state: 'ask', picked: null, typed: '' };
+    store.set('di-quiz-last', s.id);
+    lastProg = practice ? 0 : pct(sStats(s).right, items.length);
+    renderQ(true);
   };
-  const current = () => run.items[run.i];
-  const next = () => {
-    const prev = current();
-    run.i++; run.revealed = false; run.answered = false; run.picked = null; run.typed = '';
-    if (run.flow) {
-      setPos(run.i);
-      const cur = run.items[run.i];
-      if (!cur || cur.sid !== prev.sid) run.interstitial = prev.sid;
-    }
-    renderRun();
+  const cur = () => run.queue[run.i];
+  // every question that was not answered right goes to the back of the queue, until it is
+  const requeue = x => { run.reask[x.id] = (run.reask[x.id] || 0) + 1; run.queue.push(x); return true; };
+  let lastProg = 0;
+  const toast = t => {
+    const old = $('.toast'); if (old) old.remove();
+    const el = document.createElement('div'); el.className = 'toast'; el.setAttribute('role', 'status'); el.textContent = t; document.body.appendChild(el);
+    if (M) { G.fromTo(el, { y: 14, autoAlpha: 0 }, { y: 0, autoAlpha: 1, duration: .3, ease: 'power2.out' }); G.to(el, { autoAlpha: 0, y: 8, duration: .3, delay: 1.6, ease: 'power2.in', onComplete: () => el.remove() }); }
+    else setTimeout(() => el.remove(), 1900);
   };
-  const answerCard = ok => { const x = current(); record(x.id, ok); run.results.push({ x, ok }); say(ok ? 'Marked as known' : 'Marked as missed'); next(); };
-  const answerQuiz = (ok, picked, typed) => { const x = current(); record(x.id, ok); run.results.push({ x, ok }); run.answered = true; run.picked = picked; run.typed = typed; renderRun(); say(ok ? 'Correct' : 'Not right. The correct answer is shown.'); };
-  const whyHtml = (ok, it) => {
-    let corr = '';
-    if (!ok && it.t === 'fill') corr = `<span class="corr">Correct: ${esc(it.a[0])}</span>`;
-    if (!ok && it.t === 'mc') corr = `<span class="corr">Correct: ${esc(it.o[it.a])}</span>`;
-    return `<div class="verdict ${ok ? 'ok' : 'bad'}" role="status">${ok ? icons.check : icons.x}<div><b>${ok ? 'Right' : 'Not quite'}</b>${corr}<p>${esc(it.why)}</p></div></div>`;
+  const sessionRight = () => { const st = sStats(run.s); return run.practice ? run.results.filter(r => r.ok).length : st.right; };
+  const outcome = res => {   // 'r' right, 'w' wrong, 's' saw the answer, 'k' skipped
+    const x = cur();
+    if (res !== 'k') record(x.id, res);
+    const back = res === 'r' ? false : requeue(x);
+    run.results.push({ x, res, ok: res === 'r', back, first: !(run.reask[x.id] > (back ? 1 : 0)) });
   };
-  const kindLabel = x => x.kind === 'card' ? 'Concept' : x.it.t === 'fill' ? 'Fill the blank' : /print|return|shape|give|result/i.test(x.it.q) && x.it.code ? 'Read the code' : 'Pick one';
-  const runTop = (sid, counter) => {
-    const s = sessionOf(sid);
-    return topbar(`<a class="tlink" href="${run.back}" title="Back (Esc)">${icons.back}<span>${esc(run.backLabel)}</span></a><span class="tsess s-${sid}"><i class="dot"></i><span><em>Session ${esc(s.n)}</em><span class="tt"> · ${esc(s.title)}</span></span></span>`, `<span class="mono">${counter}</span>`)
-      + `<div class="prog s-${sid}"><i style="width:${pct(run.i, run.items.length)}%"></i></div>`;
+  const advance = () => {
+    anim.leave($('.card'), () => {
+      run.i++; run.state = 'ask'; run.picked = null; run.typed = '';
+      if (run.i >= run.queue.length) renderCheckpoint(); else renderQ(true);
+    });
+  };
+  const whyHtml = (kind, it) => {
+    const corr = it.t === 'fill' ? `<span class="corr">Correct: ${esc(it.a[0])}</span>` : `<span class="corr">Correct: ${esc(it.o[it.a])}</span>`;
+    if (kind === 'ok') return `<div class="verdict ok" role="status">${icons.check}<div><b>Right</b><p>${esc(it.why)}</p></div></div>`;
+    if (kind === 'bad') return `<div class="verdict bad" role="status">${icons.x}<div><b>Not quite</b>${corr}<p>${esc(it.why)}</p><small>This one comes back later in the session.</small></div></div>`;
+    return `<div class="verdict info" role="status">${icons.eye}<div><b>Here is the answer</b>${corr}<p>${esc(it.why)}</p><small>You will get this question again before the session ends.</small></div></div>`;
+  };
+  const kindLabel = it => it.t === 'fill' ? 'Fill the blank' : /print|return|shape|give|result/i.test(it.q) && it.code ? 'Read the code' : 'Pick one';
+  const quizTop = () => {
+    const s = run.s, st = sStats(s), right = sessionRight(), left = run.queue.length - run.i;
+    return topbar(brand() + tnav('quiz'), `<span class="tsess s-${s.id}"><i class="dot"></i><span><em>S<span class="tt">ession </span>${esc(s.n)}</em><span class="tt"> · ${esc(s.title)}</span></span></span><span class="tcount"><b>${right}</b><span class="tt"> of </span><span class="ts">/</span>${st.n}<span class="tt"> right</span> · ${left}<span class="tt"> to go</span><span class="ts"> left</span></span>`)
+      + `<div class="prog s-${s.id}"><i style="width:${pct(right, st.n)}%"></i></div>`;
+  };
+  const tweenProg = () => {
+    const bar = $('.prog i'); if (!bar) return;
+    const now = parseFloat(bar.style.width) || 0;
+    if (M && now !== lastProg) G.fromTo(bar, { width: lastProg + '%' }, { width: now + '%', duration: .6, ease: 'power2.out' });
+    lastProg = now;
   };
 
-  const renderRun = () => {
-    if (!run) return;
-    if (run.interstitial) return renderCheckpoint();
-    const n = run.items.length;
-    if (run.i >= n) return renderFinish();
-    const x = current(), it = x.it;
-    let body = `<div class="kind"><i class="dot"></i>${kindLabel(x)}${!run.flow ? ` · Session ${esc(sessionOf(x.sid).n)}` : ''}</div><h1 class="q">${inline(it.q)}</h1>`;
+  const renderQ = fresh => {
+    const x = cur(), it = x.it, seen = run.state;
+    const back = (run.reask[x.id] || 0) > 0;
+    let body = `<div class="kind"><i class="dot"></i>${kindLabel(it)}${back ? '<span class="back">Again</span>' : ''}</div><h1 class="q">${inline(it.q)}</h1>`;
     let foot = '', hint = '';
-    if (x.kind === 'card') {
-      if (!run.revealed) {
-        foot = `<button class="btn primary" type="button" data-act="reveal">Show answer <kbd>Space</kbd></button>`;
-        hint = 'Say the answer out loud first, then reveal.';
-      } else {
-        body += `<div class="answer"><p>${inline(it.a)}</p>${it.code ? codeHtml(it.code) : ''}</div>`;
-        foot = `<button class="btn" type="button" data-act="miss">Missed it <kbd>1</kbd></button><button class="btn primary" type="button" data-act="got">Got it <kbd>2</kbd></button>`;
-      }
-    } else if (it.t === 'mc') {
+    if (it.t === 'mc') {
       if (it.code) body += codeHtml(it.code);
-      body += `<div class="opts" role="group" aria-label="Options">` + it.o.map((o, i) => {
+      body += `<div class="opts" role="group" aria-label="Options" data-stagger>` + it.o.map((o, i) => {
         let cls = 'opt', end = `<kbd>${i + 1}</kbd>`;
-        if (run.answered) {
-          if (i === it.a) { cls += ' ok'; end = `<span class="tag">${icons.check}Correct</span>`; }
+        if (seen !== 'ask') {
+          if (i === it.a) { cls += ' ok'; end = `<span class="tag">${icons.check}${seen === 's' ? 'Answer' : 'Correct'}</span>`; }
           else if (i === run.picked) { cls += ' bad'; end = `<span class="tag">${icons.x}Your answer</span>`; }
           else { cls += ' dim'; end = ''; }
         }
-        return `<button class="${cls}" type="button" data-opt="${i}" ${run.answered ? 'disabled' : ''}><span>${inline(o)}</span>${end}</button>`;
+        return `<button class="${cls}" type="button" data-opt="${i}" ${seen !== 'ask' ? 'disabled' : ''}><span>${inline(o)}</span>${end}</button>`;
       }).join('') + '</div>';
-      if (run.answered) { body += whyHtml(run.picked === it.a, it); foot = `<button class="btn primary" type="button" data-act="next">Next <kbd>Enter</kbd></button>`; }
-      else hint = '<span class="kb">Press 1 to 4 to answer.</span>';
+      if (seen !== 'ask') body += whyHtml(seen === 'r' ? 'ok' : seen === 'w' ? 'bad' : 'info', it);
+      else hint = '<span class="kb">1 to 4 to answer · S to skip · A to see the answer</span>';
     } else {
-      const ok = run.answered ? checkFill(run.typed, it.a) : null;
-      body += codeHtml(it.code, run.answered ? (ok ? 'ok' : 'bad') : null, run.typed, it.a[0]);
-      body += `<form class="fill" data-fill><label class="sr-only" for="fill-in">Missing piece</label><input id="fill-in" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Missing piece" value="${esc(run.typed)}" ${run.answered ? 'disabled' : ''}>${run.answered ? '' : '<button class="btn primary" type="submit">Check <kbd>Enter</kbd></button>'}</form>`;
-      if (run.answered) { body += whyHtml(ok, it); foot = `<button class="btn primary" type="button" data-act="next">Next <kbd>Enter</kbd></button>`; }
+      const state = seen === 'ask' ? null : seen === 'w' ? 'bad' : 'ok';
+      body += codeHtml(it.code, state, run.typed, it.a[0]);
+      body += `<form class="fill" data-fill><label class="sr-only" for="fill-in">Missing piece</label><input id="fill-in" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Missing piece" value="${esc(run.typed)}" ${seen !== 'ask' ? 'disabled' : ''}>${seen === 'ask' ? '<button class="btn primary" type="submit">Check <kbd>Enter</kbd></button>' : ''}</form>`;
+      if (seen !== 'ask') body += whyHtml(seen === 'r' ? 'ok' : seen === 'w' ? 'bad' : 'info', it);
       else hint = 'Quotes and spacing do not matter. Case does.';
     }
-    main.innerHTML = runTop(x.sid, `${run.i + 1} / ${n}`) + `<div class="stage s-${x.sid}"><article class="card">${body}<div class="card-foot"><span class="sp"></span>${foot}</div>${hint ? `<div class="hint${hint.startsWith('<span class="kb"') ? ' kb' : ''}">${hint}</div>` : ''}</article></div>`;
-    bind();
-    const inp = $('#fill-in'); if (inp && !run.answered) { if (finePointer) inp.focus(); }
-    else { const b = $('[data-act]'); if (b && run.answered) b.focus({ preventScroll: true }); }
+    if (seen === 'ask') foot = `<button class="btn ghost" type="button" data-act="skip">${icons.skip}Skip <kbd>S</kbd></button><button class="btn" type="button" data-act="see">${icons.eye}See answer <kbd>A</kbd></button><span class="sp"></span>`;
+    else foot = `<span class="sp"></span><button class="btn primary" type="button" data-act="next">Next ${icons.fwd} <kbd>Enter</kbd></button>`;
+    main.innerHTML = quizTop() + `<div class="stage s-${x.sid}"><article class="card">${body}<div class="card-foot">${foot}</div>${hint ? `<div class="hint${hint.startsWith('<span class="kb"') ? ' kb' : ''}">${hint}</div>` : ''}</article></div>`;
+    bind(); tweenProg();
+    if (fresh) anim.enter($('.card'));
+    else { anim.in($('.verdict')); }
+    const inp = $('#fill-in'); if (inp && seen === 'ask') { if (finePointer) inp.focus(); }
+    else if (seen !== 'ask') {
+      const b = $('[data-act="next"]');
+      if (b) { b.focus({ preventScroll: true }); const r = b.getBoundingClientRect(); if (r.bottom > innerHeight - 12) b.scrollIntoView({ behavior: M ? 'smooth' : 'auto', block: 'end' }); }
+    }
     main.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => act(b.dataset.act)));
     main.querySelectorAll('[data-opt]').forEach(b => b.addEventListener('click', () => pick(+b.dataset.opt)));
     const f = $('[data-fill]'); if (f) f.addEventListener('submit', e => { e.preventDefault(); submitFill(); });
   };
+  const settle = (res, picked, typed) => {
+    outcome(res); run.state = res; run.picked = picked; run.typed = typed || '';
+    renderQ(false);
+    const it = cur().it;
+    if (res === 'r') { anim.pulse($('.opt.ok') || $('.verdict')); say('Correct'); }
+    else if (res === 'w') { anim.shake($('.opt.bad') || $('.fill')); say('Not right. The correct answer is shown. It comes back later.'); }
+    else { anim.pulse($('.opt.ok') || $('pre.code .slot.ok')); say('Answer shown. It comes back later.'); }
+    void it;
+  };
   const act = a => {
     if (!run) return;
-    if (a === 'reveal') { run.revealed = true; renderRun(); const b = $('[data-act="got"]'); if (b) b.focus({ preventScroll: true }); }
-    else if (a === 'miss') answerCard(false);
-    else if (a === 'got') answerCard(true);
-    else if (a === 'next') next();
-    else if (a === 'continue') { run.interstitial = null; renderRun(); }
+    if (a === 'next' && run.state !== 'ask') advance();
+    else if (a === 'skip' && run.state === 'ask') { outcome('k'); toast('Skipped. It comes back later.'); say('Skipped. It comes back later.'); advance(); }
+    else if (a === 'see' && run.state === 'ask') settle('s', null, '');
+    else if (a === 'continue') renderNextSession();
   };
-  const pick = i => { if (!run || run.answered) return; const it = current().it; answerQuiz(i === it.a, i, ''); };
-  const submitFill = () => { if (!run || run.answered) return; const v = $('#fill-in').value; if (!v.trim()) return; answerQuiz(checkFill(v, current().it.a), null, v); };
+  const pick = i => { if (!run || run.state !== 'ask') return; settle(i === cur().it.a ? 'r' : 'w', i, ''); };
+  const submitFill = () => { if (!run || run.state !== 'ask') return; const v = $('#fill-in').value; if (!v.trim()) { anim.shake($('.fill')); return; } settle(checkFill(v, cur().it.a) ? 'r' : 'w', null, v); };
 
-  // between two sessions of the flow: how the session just finished went, and what comes next
   const renderCheckpoint = () => {
-    const sid = run.interstitial, s = sessionOf(sid);
-    const rs = run.results.filter(r => r.x.sid === sid), ok = rs.filter(r => r.ok).length, bad = rs.filter(r => !r.ok);
-    const nx = run.items[run.i], ns = nx ? sessionOf(nx.sid) : null;
-    const st = sessionStats(s);
-    let h = runTop(sid, `${run.i} / ${run.items.length}`) + `<div class="stage s-${sid}"><article class="card"><div class="kind"><i class="dot"></i>Session ${esc(s.n)} done</div>
+    const s = run.s, st = sStats(s);
+    const ids = [...new Set(run.results.map(r => r.x.id))];
+    const firstTry = ids.filter(id => { const r = run.results.find(q => q.x.id === id); return r && r.ok; }).length;
+    const cameBack = ids.filter(id => { const rs = run.results.filter(q => q.x.id === id); return !rs[0].ok && rs[rs.length - 1].ok; }).length;
+    const stillOpen = ids.filter(id => { const rs = run.results.filter(q => q.x.id === id); return !rs[rs.length - 1].ok; });
+    const nx = nextWork(sIndex(s.id) + 1), tot = totals();
+    let h = quizTop() + `<div class="stage s-${s.id}"><article class="card"><div class="kind"><i class="dot"></i>Session ${esc(s.n)} ${stillOpen.length ? 'paused' : 'complete'}</div>
       <h1 class="q">${esc(s.title)}</h1>
-      <div class="score"><b>${ok} / ${rs.length}</b><span>right this sitting · ${st.known} of ${st.n} right overall</span></div>`;
-    if (bad.length) {
-      h += `<div class="miss"><h3>Missed just now, with the correct answer</h3>`;
-      for (const { x } of bad) {
-        const it = x.it;
-        const ans = x.kind === 'card' ? it.a : it.t === 'fill' ? `Correct: \`${it.a[0]}\`. ${it.why}` : `Correct: ${it.o[it.a]}. ${it.why}`;
-        h += `<div class="miss-row"><div class="mq">${inline(it.q)}</div><div class="ma">${inline(ans)}</div></div>`;
-      }
+      <div class="score"><b><span data-count>0</span> / ${st.n}</b><span>right in this session · <b>${tot.right}</b> of ${tot.n} across the course</span></div>
+      <div class="tri" data-stagger><div class="ok"><b>${firstTry}</b><span>right first time</span></div><div><b>${cameBack}</b><span>came back, then right</span></div><div class="${stillOpen.length ? 'bad' : ''}"><b>${stillOpen.length}</b><span>still open</span></div></div>`;
+    if (stillOpen.length) {
+      h += `<div class="miss"><h3>Still open, with the answer. They come back next time you continue.</h3>`;
+      for (const id of stillOpen) { const it = run.results.find(q => q.x.id === id).x.it; h += `<div class="miss-row"><div class="mq">${inline(it.q)}</div><div class="ma">${inline(it.t === 'fill' ? `Correct: \`${it.a[0]}\`. ${it.why}` : `Correct: ${it.o[it.a]}. ${it.why}`)}</div></div>`; }
       h += '</div>';
     }
-    if (ns) h += `<div class="nextup s-${ns.id}"><i class="dot"></i><span>Next up: <b>Session ${esc(ns.n)}, ${esc(ns.title)}</b></span></div>`;
-    h += `<div class="card-foot"><span class="sp"></span><a class="btn" href="#/">Stop for now</a><button class="btn primary" type="button" data-act="continue">${ns ? 'Continue' : 'See the result'} <kbd>Enter</kbd></button></div></article></div>`;
-    main.innerHTML = h; bind();
-    $('[data-act="continue"]').focus({ preventScroll: true });
-    main.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => act(b.dataset.act)));
-    say(`Session ${s.n} done. ${ok} of ${rs.length} right.`);
+    if (nx) h += `<div class="nextup s-${nx.id}"><i class="dot"></i><span>Next up: <b>Session ${esc(nx.n)}, ${esc(nx.title)}</b> · ${nx.quiz.length} questions</span></div>`;
+    else h += `<div class="nextup"><i class="dot"></i><span><b>Every session is done.</b> Start any session again from the start page to practice.</span></div>`;
+    h += `<div class="card-foot"><a class="btn ghost" href="#/learn/${s.id}">${icons.back}Read Session ${esc(s.n)}</a><span class="sp"></span><a class="btn" href="#/">Start page</a>${nx ? `<button class="btn primary" type="button" data-act="continue">Continue ${icons.fwd} <kbd>Enter</kbd></button>` : `<a class="btn primary" href="#/quiz/${s.id}">Practice again</a>`}</div></article></div>`;
+    main.innerHTML = h; bind(); tweenProg();
+    run.state = 'check'; run.next = nx;
+    anim.enter($('.card'));
+    anim.count($('[data-count]'), sStats(s).right);
+    const b = $('[data-act="continue"]'); if (b) b.focus({ preventScroll: true });
+    main.querySelectorAll('[data-act]').forEach(x => x.addEventListener('click', () => act(x.dataset.act)));
+    say(`Session ${s.n} ${stillOpen.length ? 'paused' : 'complete'}. ${sStats(s).right} of ${st.n} right.`);
   };
-
-  const renderFinish = () => {
-    const n = run.results.length, ok = run.results.filter(r => r.ok).length, bad = run.results.filter(r => !r.ok);
-    const last = run.items[run.items.length - 1], sid = last ? last.sid : SESSIONS[0].id;
-    let h = runTop(sid, 'done') + `<div class="stage s-${sid}"><article class="card"><div class="kind"><i class="dot"></i>${run.flow ? 'Course complete' : 'Result'}</div>
-      <h1 class="q">${esc(run.title)}</h1><div class="score"><b>${ok} / ${n}</b><span>${bad.length ? `${bad.length} to review` : 'all right, nothing to review'}</span></div>`;
-    if (bad.length && !run.flow) {
-      h += `<div class="miss"><h3>Missed, with the correct answer</h3>`;
-      for (const { x } of bad) {
-        const it = x.it;
-        const ans = x.kind === 'card' ? it.a : it.t === 'fill' ? `Correct: \`${it.a[0]}\`. ${it.why}` : `Correct: ${it.o[it.a]}. ${it.why}`;
-        h += `<div class="miss-row"><div class="mq">${inline(it.q)}</div><div class="ma">${inline(ans)}</div></div>`;
-      }
-      h += '</div>';
-    }
-    h += `<div class="card-foot"><span class="sp"></span>${bad.length ? '<a class="btn" href="#/mistakes">Review mistakes</a>' : ''}${run.flow ? '' : '<button class="btn" type="button" data-act="again">Run again</button>'}<a class="btn primary" href="#/">Start page</a></div></article></div>`;
-    main.innerHTML = h; bind();
-    if (run.flow) setPos(0);
-    const cfg = { title: run.title, back: run.back, backLabel: run.backLabel, mixed: run.mixed }, items = run.items;
-    main.querySelectorAll('[data-act="again"]').forEach(b => b.addEventListener('click', () => startRun({ ...cfg, items })));
-    say(`Finished. ${ok} of ${n} right.`);
-  };
+  const renderNextSession = () => { const nx = run && run.next; if (nx) { location.hash = `#/quiz/${nx.id}`; } else location.hash = '#/'; };
 
   document.addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const tag = e.target && e.target.tagName;
-    if (!run) { if (e.key === 'Enter' && (location.hash === '' || location.hash === '#/') && tag !== 'A' && tag !== 'BUTTON') { e.preventDefault(); location.hash = '#/flow'; } return; }
-    if (e.key === 'Escape') { location.hash = run.back; return; }
-    const go = f => { e.preventDefault(); f(); };   // preventDefault stops the focused button from also firing a click
-    if (run.interstitial) { if (e.key === 'Enter') go(() => act('continue')); return; }
-    const x = run.items[run.i]; if (!x) return;
+    if (!run) { if (e.key === 'Enter' && (location.hash === '' || location.hash === '#/') && tag !== 'A' && tag !== 'BUTTON') { e.preventDefault(); location.hash = '#/quiz'; } return; }
+    if (e.key === 'Escape') { location.hash = '#/'; return; }
+    const go = f => { e.preventDefault(); f(); };
+    if (run.state === 'check') { if (e.key === 'Enter' && tag !== 'A') go(() => act('continue')); return; }
     const inInput = tag === 'INPUT';
-    if (x.kind === 'card') {
-      if (e.key === ' ' && !run.revealed) go(() => act('reveal'));
-      else if (run.revealed && e.key === '1') go(() => act('miss'));
-      else if (run.revealed && e.key === '2') go(() => act('got'));
-    } else if (x.it.t === 'mc') {
-      if (!run.answered && /^[1-4]$/.test(e.key)) go(() => pick(+e.key - 1));
-      else if (run.answered && e.key === 'Enter') go(() => act('next'));
-    } else if (run.answered && e.key === 'Enter' && !inInput) go(() => act('next'));
+    if (run.state !== 'ask') { if (e.key === 'Enter') go(() => act('next')); return; }
+    if (!inInput && (e.key === 's' || e.key === 'S')) return go(() => act('skip'));
+    if (!inInput && (e.key === 'a' || e.key === 'A')) return go(() => act('see'));
+    if (cur().it.t === 'mc' && /^[1-4]$/.test(e.key)) go(() => pick(+e.key - 1));
   });
 
   /* ---------- router ---------- */
   const route = () => {
     const h = location.hash || '#/';
-    run = null;
+    run = null; anim.killScroll();
     window.scrollTo(0, 0);
     if (h === '#/') return viewStart();
-    if (h === '#/libs') return viewLibs();
-    if (h === '#/flow') { const pos = getPos(); return startRun({ items: FLOW, i: pos >= FLOW.length ? 0 : pos, title: 'The whole course', flow: true }); }
-    let m = h.match(/^#\/(?:flow|s)\/([a-z0-9]+)/);
-    if (m) {
-      const s = sessionOf(m[1]); if (!s) { location.hash = '#/'; return; }
-      const i = sessionStart(s.id); setPos(i);
-      return startRun({ items: FLOW, i, title: 'The whole course', flow: true });
-    }
-    if (h === '#/mistakes') {
-      const items = allItems().filter(x => missed(x.id));
-      if (!items.length) { main.innerHTML = topbar(brand(), `<a class="tlink" href="#/">${icons.back}Start page</a>`) + `<div class="wrap"><h1 class="h1">Mistakes</h1><p class="lede">Everything you marked missed or answered wrong, across every session. Answer it right once and it leaves this list.</p><div class="empty">Nothing missed yet.</div></div>`; bind(); return; }
-      return startRun({ title: 'Mistakes', items: shuffle(items), mixed: true });
-    }
-    if (h === '#/mix') return startRun({ title: 'Mixed drill', items: shuffle(allItems()).slice(0, 20), mixed: true });
+    if (h === '#/learn') { location.hash = `#/learn/${learnLast()}`; return; }
+    if (h === '#/learn/libs') return viewLibs();
+    let m = h.match(/^#\/learn\/([a-z0-9]+)$/);
+    if (m) { const s = sessionOf(m[1]); if (!s) { location.hash = '#/'; return; } return viewLearn(s); }
+    if (h === '#/quiz') { const s = nextWork(0) || sessionOf(store.get('di-quiz-last', SESSIONS[0].id)) || SESSIONS[0]; return startQuiz(s); }
+    m = h.match(/^#\/(?:quiz|flow|s)\/([a-z0-9]+)/);
+    if (m) { const s = sessionOf(m[1]); if (!s) { location.hash = '#/'; return; } return startQuiz(s); }
     location.hash = '#/';
   };
   window.addEventListener('hashchange', route);
