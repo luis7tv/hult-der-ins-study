@@ -153,7 +153,7 @@
   const kindLabel = x => x.kind === 'card' ? 'Concept' : x.it.t === 'fill' ? 'Fill the blank' : /print|return|shape|give|result/i.test(x.it.q) && x.it.code ? 'Read the code' : 'Pick one';
   const runTop = (sid, counter) => {
     const s = sessionOf(sid);
-    return topbar(`<a class="tlink" href="${run.back}" title="Back (Esc)">${icons.back}<span>${esc(run.backLabel)}</span></a><span class="tsess s-${sid}"><i class="dot"></i><span><em>Session ${esc(s.n)}</em> · ${esc(s.title)}</span></span>`, `<span class="mono">${counter}</span>`)
+    return topbar(`<a class="tlink" href="${run.back}" title="Back (Esc)">${icons.back}<span>${esc(run.backLabel)}</span></a><span class="tsess s-${sid}"><i class="dot"></i><span><em>Session ${esc(s.n)}</em><span class="tt"> · ${esc(s.title)}</span></span></span>`, `<span class="mono">${counter}</span>`)
       + `<div class="prog s-${sid}"><i style="width:${pct(run.i, run.items.length)}%"></i></div>`;
   };
 
