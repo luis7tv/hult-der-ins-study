@@ -55,7 +55,7 @@ input{font:inherit;color:inherit}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .skip-link{position:absolute;left:12px;top:-48px;background:var(--ink);color:var(--inv);padding:8px 12px;border-radius:10px;z-index:50}
 .skip-link:focus{top:12px}
-code{font-family:var(--mono);font-size:.9em;background:var(--code-bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-weight:400}
+code{font-family:var(--mono);font-size:.9em;color:var(--str);background:var(--code-bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-weight:500}
 .sp{flex:1}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--c);box-shadow:var(--c-glow);flex:none}
 kbd{font-family:var(--mono);font-size:10.5px;font-weight:400;padding:1px 6px;border:1px solid currentColor;border-radius:5px;opacity:.55}
