@@ -1,0 +1,5 @@
+deploy.sh
+deploy-retry.sh
+deploy-retry.log
+deploy-retry.out
+.gitignore

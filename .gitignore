@@ -1,0 +1,4 @@
+.vercel
+deploy-retry.log
+deploy-retry.out
+.DS_Store
