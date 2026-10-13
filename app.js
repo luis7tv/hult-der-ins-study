@@ -37,7 +37,8 @@
     learn(root) {
       if (!M || !ST) return;
       root.querySelectorAll('.lsec').forEach(sec => {
-        G.from(sec, { y: 26, autoAlpha: 0, ease: 'none', scrollTrigger: { trigger: sec, start: 'top 94%', end: 'top 72%', scrub: true } });
+        if (sec.getBoundingClientRect().top < innerHeight * .9) return;   // already on screen: show it, no reveal
+        G.from(sec, { y: 24, autoAlpha: 0, ease: 'none', scrollTrigger: { trigger: sec, start: 'top 96%', end: 'top 82%', scrub: true } });
       });
     },
     killScroll() { if (ST) ST.getAll().forEach(t => t.kill()); }
