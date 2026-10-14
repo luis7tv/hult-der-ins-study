@@ -92,7 +92,7 @@
   const toggleTheme = () => { root.dataset.theme = isDark() ? 'light' : 'dark'; try { localStorage.setItem('di-theme', root.dataset.theme); } catch (e) {} syncTheme(); };
   const themeBtn = () => `<button class="tbtn" type="button" data-theme-toggle>${icons.sun}${icons.moon}</button>`;
   const brand = () => `<a class="brand" href="#/" aria-label="Deriving Insights, start page"><span class="brand-mark" aria-hidden="true"></span><span class="brand-t">Deriving Insights</span></a>`;
-  const tnav = on => `<nav class="tnav" aria-label="Sections"><a href="#/learn" class="${on === 'learn' ? 'on' : ''}">Learn</a><a href="#/quiz" class="${on === 'quiz' ? 'on' : ''}">Quiz</a></nav>`;
+  const tnav = on => `<nav class="tnav" aria-label="Sections"><a href="#/learn" class="${on === 'learn' ? 'on' : ''}">Learn</a><a href="#/interpret" class="${on === 'interpret' ? 'on' : ''}">Interpret</a><a href="#/quiz" class="${on === 'quiz' ? 'on' : ''}">Quiz</a></nav>`;
   const topbar = (left, right = '') => `<header class="top">${left}<span class="sp"></span>${right}${themeBtn()}</header>`;
   const bind = () => { main.querySelectorAll('[data-theme-toggle]').forEach(b => b.addEventListener('click', toggleTheme)); syncTheme(); };
   const learnLast = () => store.get('di-learn-last', SESSIONS[0].id);
@@ -105,9 +105,10 @@
     h += `<div class="wrap"><section class="hero">
       <span class="mono" data-rise>Hult MBAN · Python · Sessions 1 to 7</span>
       <h1 class="h1" data-rise>Deriving Insights through Data with Python</h1>
-      <p class="lede" data-rise>Learn explains every notebook section in plain words. Quiz asks one code question per screen; see the answer or skip whenever you want, and it comes back until you get it right.</p>
+      <p class="lede" data-rise>Learn explains every notebook section in plain words. Interpret shows how to read each output and write the business side. Quiz asks one code question per screen; see the answer or skip whenever you want, and it comes back until you get it right.</p>
       <div class="doors">
         <a class="door s-${ls.id}" href="#/learn/${ls.id}" data-rise><span class="door-k"><i class="dot"></i>Learn</span><b>Read the sessions</b><p>Each section of the notebooks explained simply, with the code next to it.</p><span class="door-f"><span>Session ${esc(ls.n)}, ${esc(ls.title)}</span><span class="btn primary">Open ${icons.fwd}</span></span></a>
+        <a class="door" href="#/interpret" data-rise><span class="door-k"><i class="dot"></i>Interpret</span><b>Read the numbers for the business</b><p>What each output means and the three sentences the course wants at the end, with charts from the course data.</p><span class="door-f"><span>${(window.DI_INTERPRET || { sections: [] }).sections.length} sections · 7 charts</span><span class="btn primary">Open ${icons.fwd}</span></span></a>
         <a class="door s-${qs.id}" href="#/quiz" data-rise><span class="door-k"><i class="dot"></i>Quiz</span><b>${t.right ? 'Continue the quiz' : 'Start the quiz'}</b><p>${t.n} code questions. Skip, see the answer, or answer. Everything you did not get right comes back.</p><span class="door-f"><span><b>${t.right}</b> of ${t.n} right · next Session ${esc(qs.n)}</span><span class="btn primary">${t.right ? 'Continue' : 'Start'} ${icons.fwd}</span></span></a>
       </div>
     </section>
@@ -125,24 +126,19 @@
     });
   };
 
-  /* ---------- learn ---------- */
-  const viewLearn = s => {
-    const L = LEARN[s.id] || { intro: '', sections: [] };
-    store.set('di-learn-last', s.id);
-    const idx = sIndex(s.id), prev = SESSIONS[idx - 1], next = SESSIONS[idx + 1];
-    let h = topbar(brand() + tnav('learn'), `<span class="tsess s-${s.id}"><i class="dot"></i><span><em>S<span class="tt">ession </span>${esc(s.n)}</em><span class="tt"> · ${esc(s.title)}</span></span></span>`);
-    h += `<div class="learn s-${s.id}"><article class="article">
-      <header class="lhead"><span class="mono" data-rise><em>Session ${esc(s.n)}</em> · ${L.sections.length} sections · ${s.cards.length} quick-review points</span><h1 class="h1" data-rise>${esc(s.title)}</h1><p class="lede" data-rise>${esc(L.intro || s.sub)}</p></header>`;
-    L.sections.forEach((sec, i) => {
-      h += `<section class="lsec" id="sec-${i}"><h2><span class="n">${i + 1}</span><span>${esc(sec.h)}</span></h2>${(sec.p || []).map(p => `<p>${inline(p)}</p>`).join('')}${sec.code ? codeHtml(sec.code) : ''}</section>`;
-    });
-    h += `<section class="lsec review" id="review"><h2><span class="n">${L.sections.length + 1}</span><span>Quick review</span></h2><p>Every point from this session as a question and its answer. Cover the answer, say it, check.</p>`;
-    for (const c of s.cards) h += `<div class="qa"><b>${inline(c.q)}</b><p>${inline(c.a)}</p>${c.code ? codeHtml(c.code) : ''}</div>`;
-    h += `</section><div class="lcta">${prev ? `<a class="btn ghost" href="#/learn/${prev.id}">${icons.back}Session ${esc(prev.n)}</a>` : ''}<span class="sp"></span>${next ? `<a class="btn" href="#/learn/${next.id}">Session ${esc(next.n)}: ${esc(next.title)} ${icons.fwd}</a>` : ''}<a class="btn primary" href="#/quiz/${s.id}">Quiz Session ${esc(s.n)} ${icons.fwd}</a></div></article>
-      <aside class="rail" aria-label="On this page"><span class="mono">Session ${esc(s.n)}</span>${L.sections.map((sec, i) => `<button type="button" data-go="sec-${i}">${esc(sec.h)}</button>`).join('')}<button type="button" data-go="review">Quick review</button><a class="btn primary" href="#/quiz/${s.id}">Quiz this session</a></aside></div>`;
-    // phone and tablet: a sticky strip of section numbers instead of the rail
-    const strip = `<nav class="lnav s-${s.id}" aria-label="Sections">${L.sections.map((sec, i) => `<button type="button" data-go="sec-${i}" title="${esc(sec.h)}">${i + 1}</button>`).join('')}<button type="button" data-go="review" title="Quick review">Review</button></nav>`;
-    main.innerHTML = h.replace('<div class="learn ', strip + '<div class="learn '); bind();
+  /* ---------- article pages: learn and interpret ---------- */
+  const secHtml = (sec, i) => {
+    let b = `<section class="lsec" id="sec-${i}"><h2><span class="n">${i + 1}</span><span>${esc(sec.h)}</span></h2>`;
+    b += (sec.p || []).map(p => `<p>${inline(p)}</p>`).join('');
+    if (sec.code) b += codeHtml(sec.code);
+    if (sec.img) b += `<figure class="fig"><img src="${sec.img.src}" alt="${esc(sec.img.alt)}" loading="lazy" width="${sec.img.w || 2000}" height="${sec.img.h || 1080}">${sec.img.cap ? `<figcaption>${inline(sec.img.cap)}</figcaption>` : ''}</figure>`;
+    if (sec.say) b += `<div class="say"><b>${esc(sec.say.t || 'Say it like this')}</b>${sec.say.lines.map(l => `<p>${inline(l)}</p>`).join('')}</div>`;
+    if (sec.ex) b += `<div class="ex"><b>${esc(sec.ex.from)}</b>${sec.ex.lines.map(l => `<p>${inline(l)}</p>`).join('')}</div>`;
+    if (sec.list) b += `<ul class="pts">${sec.list.map(l => `<li>${inline(l).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')}</li>`).join('')}</ul>`;
+    return b + '</section>';
+  };
+  const mountArticle = (h, strip) => {
+    main.innerHTML = h.replace('<div class="learn', strip + '<div class="learn'); bind();
     main.querySelectorAll('[data-go]').forEach(b => b.addEventListener('click', () => { const el = document.getElementById(b.dataset.go); if (el) el.scrollIntoView({ behavior: M ? 'smooth' : 'auto', block: 'start' }); }));
     anim.page(main.querySelector('.lhead'));
     anim.learn(main);
@@ -154,6 +150,34 @@
       main.querySelectorAll('.lsec').forEach(sec => io.observe(sec));
     }
     if (ST && M) ST.refresh();
+  };
+  const viewInterpret = () => {
+    const I = window.DI_INTERPRET || { intro: '', sections: [] };
+    let h = topbar(brand() + tnav('interpret'), `<span class="tsess"><i class="dot"></i><span><em>Interpret</em><span class="tt"> · the business side</span></span></span>`);
+    h += `<div class="learn"><article class="article"><header class="lhead"><span class="mono" data-rise><em>Interpret</em> · ${I.sections.length} sections · every output the course produces</span><h1 class="h1" data-rise>Reading the numbers for the business</h1><p class="lede" data-rise>${esc(I.intro)}</p></header>`;
+    I.sections.forEach((sec, i) => { h += secHtml(sec, i); });
+    h += `<div class="lcta"><a class="btn ghost" href="#/learn">${icons.back}Learn</a><span class="sp"></span><a class="btn primary" href="#/quiz">Quiz ${icons.fwd}</a></div></article>
+      <aside class="rail" aria-label="On this page"><span class="mono">Interpret</span>${I.sections.map((sec, i) => `<button type="button" data-go="sec-${i}">${esc(sec.h)}</button>`).join('')}<a class="btn primary" href="#/quiz">Quiz</a></aside></div>`;
+    const strip = `<nav class="lnav" aria-label="Sections">${I.sections.map((sec, i) => `<button type="button" data-go="sec-${i}" title="${esc(sec.h)}">${i + 1}</button>`).join('')}</nav>`;
+    mountArticle(h, strip);
+  };
+
+  /* ---------- learn ---------- */
+  const viewLearn = s => {
+    const L = LEARN[s.id] || { intro: '', sections: [] };
+    store.set('di-learn-last', s.id);
+    const idx = sIndex(s.id), prev = SESSIONS[idx - 1], next = SESSIONS[idx + 1];
+    let h = topbar(brand() + tnav('learn'), `<span class="tsess s-${s.id}"><i class="dot"></i><span><em>S<span class="tt">ession </span>${esc(s.n)}</em><span class="tt"> · ${esc(s.title)}</span></span></span>`);
+    h += `<div class="learn s-${s.id}"><article class="article">
+      <header class="lhead"><span class="mono" data-rise><em>Session ${esc(s.n)}</em> · ${L.sections.length} sections · ${s.cards.length} quick-review points</span><h1 class="h1" data-rise>${esc(s.title)}</h1><p class="lede" data-rise>${esc(L.intro || s.sub)}</p></header>`;
+    L.sections.forEach((sec, i) => { h += secHtml(sec, i); });
+    h += `<section class="lsec review" id="review"><h2><span class="n">${L.sections.length + 1}</span><span>Quick review</span></h2><p>Every point from this session as a question and its answer. Cover the answer, say it, check.</p>`;
+    for (const c of s.cards) h += `<div class="qa"><b>${inline(c.q)}</b><p>${inline(c.a)}</p>${c.code ? codeHtml(c.code) : ''}</div>`;
+    h += `</section><div class="lcta">${prev ? `<a class="btn ghost" href="#/learn/${prev.id}">${icons.back}Session ${esc(prev.n)}</a>` : ''}<a class="btn ghost" href="#/interpret">How to read these outputs</a><span class="sp"></span>${next ? `<a class="btn" href="#/learn/${next.id}">Session ${esc(next.n)}: ${esc(next.title)} ${icons.fwd}</a>` : ''}<a class="btn primary" href="#/quiz/${s.id}">Quiz Session ${esc(s.n)} ${icons.fwd}</a></div></article>
+      <aside class="rail" aria-label="On this page"><span class="mono">Session ${esc(s.n)}</span>${L.sections.map((sec, i) => `<button type="button" data-go="sec-${i}">${esc(sec.h)}</button>`).join('')}<button type="button" data-go="review">Quick review</button><a class="btn primary" href="#/quiz/${s.id}">Quiz this session</a></aside></div>`;
+    // phone and tablet: a sticky strip of section numbers instead of the rail
+    const strip = `<nav class="lnav s-${s.id}" aria-label="Sections">${L.sections.map((sec, i) => `<button type="button" data-go="sec-${i}" title="${esc(sec.h)}">${i + 1}</button>`).join('')}<button type="button" data-go="review" title="Quick review">Review</button></nav>`;
+    mountArticle(h, strip);
   };
 
   const viewLibs = () => {
@@ -331,6 +355,7 @@
     if (h === '#/') return viewStart();
     if (h === '#/learn') { location.hash = `#/learn/${learnLast()}`; return; }
     if (h === '#/learn/libs') return viewLibs();
+    if (h === '#/interpret') return viewInterpret();
     let m = h.match(/^#\/learn\/([a-z0-9]+)$/);
     if (m) { const s = sessionOf(m[1]); if (!s) { location.hash = '#/'; return; } return viewLearn(s); }
     if (h === '#/quiz') { const s = nextWork(0) || sessionOf(store.get('di-quiz-last', SESSIONS[0].id)) || SESSIONS[0]; return startQuiz(s); }
